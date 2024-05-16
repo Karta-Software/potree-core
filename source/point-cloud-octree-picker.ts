@@ -13,7 +13,8 @@ import {
 	Vector4,
 	WebGLRenderer,
 	WebGLRenderTarget,
-	Color
+	Color,
+	Vector2
 } from 'three';
 import {COLOR_BLACK, DEFAULT_PICK_WINDOW_SIZE} from './constants';
 import {ClipMode, PointCloudMaterial, PointColorType} from './materials';
@@ -93,9 +94,8 @@ export class PointCloudOctreePicker
 		const pickMaterial = pickState.material;
 
 		const pixelRatio = renderer.getPixelRatio();
-		const width = Math.ceil(renderer.domElement.clientWidth * pixelRatio);
-		const height = Math.ceil(renderer.domElement.clientHeight * pixelRatio);
-		PointCloudOctreePicker.updatePickRenderTarget(this.pickState, width, height);
+		const renderSize = renderer.getDrawingBufferSize(new Vector2())
+		PointCloudOctreePicker.updatePickRenderTarget(this.pickState, renderSize.x, renderSize.y);
 
 		const pixelPosition = PointCloudOctreePicker.helperVec3; // Use helper vector to prevent extra allocations.
 
@@ -106,16 +106,16 @@ export class PointCloudOctreePicker
 		else 
 		{
 			pixelPosition.addVectors(camera.position, ray.direction).project(camera);
-			pixelPosition.x = (pixelPosition.x + 1) * width * 0.5;
-			pixelPosition.y = (pixelPosition.y + 1) * height * 0.5;
+			pixelPosition.x = (pixelPosition.x + 1) * renderSize.x * 0.5;
+			pixelPosition.y = (pixelPosition.y + 1) * renderSize.y * 0.5;
 		}
 
 		const pickWndSize = Math.floor(
 			(params.pickWindowSize || DEFAULT_PICK_WINDOW_SIZE) * pixelRatio,
 		);
 		const halfPickWndSize = (pickWndSize - 1) / 2;
-		const x = Math.floor(clamp(pixelPosition.x - halfPickWndSize, 0, width));
-		const y = Math.floor(clamp(pixelPosition.y - halfPickWndSize, 0, height));
+		const x = Math.floor(clamp(pixelPosition.x - halfPickWndSize, 0, renderSize.x));
+		const y = Math.floor(clamp(pixelPosition.y - halfPickWndSize, 0, renderSize.y));
 
 		PointCloudOctreePicker.prepareRender(renderer, x, y, pickWndSize, pickMaterial, pickState);
 
@@ -134,8 +134,10 @@ export class PointCloudOctreePicker
 
 		// Read back image and decode hit point
 		const pixels = PointCloudOctreePicker.readPixels(renderer, x, y, pickWndSize);
-		const hit = PointCloudOctreePicker.findHit(pixels, pickWndSize);
-		return PointCloudOctreePicker.getPickPoint(hit, renderedNodes);
+		const hit = PointCloudOctreePicker.findHit(pixels, pickWndSize, renderedNodes, camera);
+		const point = PointCloudOctreePicker.getPickPoint(hit, renderedNodes);
+		
+		return point
 	}
 
 	private static prepareRender(
@@ -331,36 +333,53 @@ export class PointCloudOctreePicker
 		});
 	}
 
-	private static findHit(pixels: Uint8Array, pickWndSize: number): PointCloudHit | null 
+	private static findHit(pixels: Uint8Array, pickWndSize: number, nodes: RenderedNode[], camera: THREE.Camera): PointCloudHit | null 
 	{
 		const ibuffer = new Uint32Array(pixels.buffer);
 
-		// Find closest hit inside pixelWindow boundaries
-		let min = Number.MAX_VALUE;
+		// Find closest hit inside pixelWindow boundaries and closest to the camera.
+		let minScreen = Number.MAX_VALUE;
+		let minCameraDistance = Number.MAX_VALUE;
 		let hit: PointCloudHit | null = null;
-		for (let u = 0; u < pickWndSize; u++) 
-		{
-			for (let v = 0; v < pickWndSize; v++) 
-			{
-				const offset = u + v * pickWndSize;
-				const distance =
-          Math.pow(u - (pickWndSize - 1) / 2, 2) + Math.pow(v - (pickWndSize - 1) / 2, 2);
-
-				const pcIndex = pixels[4 * offset + 3];
-				pixels[4 * offset + 3] = 0;
-				const pIndex = ibuffer[offset];
-
-				if (pcIndex > 0 && distance < min) 
-				{
-					hit = {
-						pIndex: pIndex,
-						pcIndex: pcIndex - 1
-					};
-					min = distance;
-				}
+		for (let u = 0; u < pickWndSize; u++) {
+		  for (let v = 0; v < pickWndSize; v++) {
+			const offset = u + v * pickWndSize;
+			const screenDistance = Math.pow(u - (pickWndSize - 1) / 2, 2) + Math.pow(v - (pickWndSize - 1) / 2, 2);
+	
+			const pcIndex = pixels[4 * offset + 3];
+	
+			// Set pcIndex bit to 0 for proper conversion to pointIndex afterwards.
+			pixels[4 * offset + 3] = 0;
+			const pIndex = ibuffer[offset];
+	
+			if (pcIndex > 0 && pcIndex !== 255 && screenDistance <= minScreen) {
+			  const pointPosition = PointCloudOctreePicker.getPointPosition(nodes, pcIndex - 1, pIndex);
+			  const distanceToCamera = pointPosition.distanceToSquared(camera.position);
+	
+			  if (distanceToCamera < minCameraDistance) {
+				hit = {
+				  pIndex: pIndex,
+				  pcIndex: pcIndex - 1
+				};
+	
+				minScreen = screenDistance;
+				minCameraDistance = distanceToCamera;
+			  }
 			}
+		  }
 		}
 		return hit;
+	}
+	
+	public static getPointPosition(nodes: RenderedNode[], pcIndex: number, pIndex: number): Vector3 {
+		const points = nodes[pcIndex]?.node.sceneNode;
+	
+		if (!points) throw new Error('Point cloud not found');
+	
+		return this.helperVec3
+		  .fromBufferAttribute(points.geometry.attributes['position'] as THREE.BufferAttribute, pIndex)
+		  .applyMatrix4(points.matrixWorld);
+		  
 	}
 
 	private static getPickPoint(hit: PointCloudHit | null, nodes: RenderedNode[]): PickPoint | null 
@@ -370,9 +389,13 @@ export class PointCloudOctreePicker
 			return null;
 		}
 
-		const point: PickPoint = {};
+		const points = nodes[hit.pcIndex].node.sceneNode;
+		const point: PickPoint = { 
+			pointIndex: hit.pIndex, 
+			object: points, 
+			position: new Vector3
+		};
 
-		const points = nodes[hit.pcIndex] && nodes[hit.pcIndex].node.sceneNode;
 		if (!points) 
 		{
 			return null;
@@ -437,6 +460,8 @@ export class PointCloudOctreePicker
 			.applyMatrix4(points.matrixWorld);
 	}
 
+
+	
 	private static addNormalToPickPoint(
 		point: PickPoint,
 		hit: PointCloudHit,
