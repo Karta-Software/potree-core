@@ -333,7 +333,7 @@ export class PointCloudOctreePicker
 		});
 	}
 
-	private static findHit(pixels: Uint8Array, pickWndSize: number, nodes: RenderedNode[], camera: THREE.Camera): PointCloudHit | null 
+	private static findHit(pixels: Uint8Array, pickWndSize: number, nodes: RenderedNode[], camera:Camera): PointCloudHit | null 
 	{
 		const ibuffer = new Uint32Array(pixels.buffer);
 
@@ -377,7 +377,7 @@ export class PointCloudOctreePicker
 		if (!points) throw new Error('Point cloud not found');
 	
 		return this.helperVec3
-		  .fromBufferAttribute(points.geometry.attributes['position'] as THREE.BufferAttribute, pIndex)
+		  .fromBufferAttribute(points.geometry.attributes['position'] as BufferAttribute, pIndex)
 		  .applyMatrix4(points.matrixWorld);
 		  
 	}
@@ -389,12 +389,13 @@ export class PointCloudOctreePicker
 			return null;
 		}
 
-		const points = nodes[hit.pcIndex].node.sceneNode;
-		const point: PickPoint = { 
+		//const points = nodes[hit.pcIndex].node.sceneNode;
+		const point: PickPoint = { /*
 			pointIndex: hit.pIndex, 
 			object: points, 
-			position: new Vector3
+			position: new Vector3*/
 		};
+		const points = nodes[hit.pcIndex] && nodes[hit.pcIndex].node.sceneNode;
 
 		if (!points) 
 		{
@@ -444,7 +445,6 @@ export class PointCloudOctreePicker
 				}
 			}
 		}
-
 		return point;
 	}
 
