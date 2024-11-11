@@ -16,7 +16,7 @@ export class NodeLoader
 	offset?: [number, number, number];
 	
 
-	constructor(public url: string, public workerPool: WorkerPool, public metadata: Metadata)
+	constructor(public metadataUrl: string, public octreeUrl: string, public hierarchyUrl: string, public workerPool: WorkerPool, public metadata: Metadata)
 	{
 	}
 
@@ -46,8 +46,6 @@ export class NodeLoader
 				throw new Error('byteOffset and byteSize are required');
 			}
 
-			let urlOctree = this.url.replace('/metadata.json', '/octree.bin');
-
 			let first = byteOffset;
 			let last = byteOffset + byteSize - BigInt(1);
 
@@ -60,7 +58,7 @@ export class NodeLoader
 			}
 			else 
 			{
-				let response = await fetch(urlOctree, {
+				let response = await fetch(this.octreeUrl, {
 					headers: {
 						'content-type': 'multipart/byteranges',
 						'Range': `bytes=${first}-${last}`
@@ -275,13 +273,11 @@ export class NodeLoader
 		{
 			throw new Error(`hierarchyByteOffset and hierarchyByteSize are undefined for node ${node.name}`);
 		}
-
-		let hierarchyPath = this.url.replace('/metadata.json', '/hierarchy.bin');
 		
 		let first = hierarchyByteOffset;
 		let last = first + hierarchyByteSize - BigInt(1);
 
-		let response = await fetch(hierarchyPath, {
+		let response = await fetch(this.hierarchyUrl, {
 			headers: {
 				'content-type': 'multipart/byteranges',
 				'Range': `bytes=${first}-${last}`
@@ -448,22 +444,22 @@ export class OctreeLoader
 		return attributes;
 	}
 
-	async load(url: string, xhrRequest: XhrRequest)
+	async load(metadataUrl: string, octreeUrl: string, hierarchyUrl: string, xhrRequest: XhrRequest)
 	{ // Previously a static method
 
-		let response = await xhrRequest(url);
+		let response = await xhrRequest(metadataUrl);
 		let metadata: Metadata = await response.json();
 
 		let attributes = OctreeLoader.parseAttributes(metadata.attributes);
 		// console.log(attributes)
 
-		let loader = new NodeLoader(url, this.workerPool, metadata);
+		let loader = new NodeLoader(metadataUrl, octreeUrl, hierarchyUrl, this.workerPool, metadata);
 		loader.attributes = attributes;
 		loader.scale = metadata.scale;
 		loader.offset = metadata.offset;
 
 		let octree = new OctreeGeometry(loader, new Box3(new Vector3(...metadata.boundingBox.min), new Vector3(...metadata.boundingBox.max)));
-		octree.url = url;
+		octree.url = octreeUrl;
 		octree.spacing = metadata.spacing;
 		octree.scale = metadata.scale;
 

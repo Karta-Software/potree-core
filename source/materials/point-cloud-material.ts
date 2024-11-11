@@ -773,9 +773,20 @@ export class PointCloudMaterial extends RawShaderMaterial
   		material: Material,
   	) => 
   	{
-  		const pointCloudMaterial = material as PointCloudMaterial;
+  		let pointCloudMaterial = material as PointCloudMaterial//new PointCloudMaterial;
+		
+		// If you want to use a post processor in the same scene as a point cloud this is required
+		if(!pointCloudMaterial.uniforms){
+			pointCloudMaterial.uniforms = (new PointCloudMaterial).uniforms
+			pointCloudMaterial.uniforms.size = makeUniform('f', 1);
+			pointCloudMaterial.opacity = material.opacity;
+		} 
+		
+		if(!pointCloudMaterial.visibleNodeTextureOffsets){
+			pointCloudMaterial.visibleNodeTextureOffsets = (new PointCloudMaterial).visibleNodeTextureOffsets
+		}
+		
   		const materialUniforms = pointCloudMaterial.uniforms;
-
   		materialUniforms.level.value = node.level;
   		materialUniforms.isLeafNode.value = node.isLeafNode;
 
